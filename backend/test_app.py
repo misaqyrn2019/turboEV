@@ -13,10 +13,13 @@ from backend import app as server
 
 PASSWORD='Test-Strong-Password-2026'
 
-@pytest.fixture
-def client(tmp_path,monkeypatch):
+@pytest.fixture(params=['sqlite', 'libsql'])
+def client(tmp_path,monkeypatch,request):
     monkeypatch.setattr(server,'DB_PATH',tmp_path/'test.sqlite3')
     monkeypatch.setenv('FLEET_ADMIN_PASSWORD',PASSWORD)
+    if request.param == 'libsql':
+        monkeypatch.setenv('TURSO_DATABASE_URL', 'libsql://test.invalid')
+        monkeypatch.setattr(server.storage, 'connect', lambda path: server.storage.LibsqlConnection(str(path)))
     with TestClient(server.app) as c:
         result=c.post('/api/auth/login',json={'username':'admin','password':PASSWORD})
         assert result.status_code==200,result.text

@@ -1,7 +1,15 @@
 let csrf = ''
 export function setCsrf(value: string) { csrf = value }
 export async function api<T = unknown>(path: string, method = 'GET', data?: unknown): Promise<T> {
-  const response = await fetch('/api' + path, { method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf }, body: data === undefined ? undefined : JSON.stringify(data) })
+  let response: Response
+  try {
+    response = await fetch('/api' + path, { method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf }, body: data === undefined ? undefined : JSON.stringify(data) })
+  } catch {
+    throw new Error('ارتباط با سرور برقرار نشد. اتصال اینترنت یا اجرای سرویس را بررسی کنید.')
+  }
+  if (!response.headers.get('content-type')?.includes('application/json')) {
+    throw new Error('سرویس دادهٔ سایت در دسترس نیست. مدیر سایت باید استقرار بخش API و اتصال پایگاه‌داده را بررسی کند.')
+  }
   if (!response.ok) {
     let message = 'ارتباط با سامانه برقرار نشد.'
     try { const body = await response.json(); message = typeof body.detail === 'string' ? body.detail : 'مقادیر فرم را بررسی کنید.' } catch { /* Generic message for invalid server responses. */ }

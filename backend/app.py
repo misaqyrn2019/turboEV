@@ -4,6 +4,7 @@ import csv
 import hashlib
 import io
 import json
+import logging
 import math
 import os
 from pathlib import Path
@@ -12,10 +13,12 @@ import secrets
 import sqlite3
 import tempfile
 import time
+import threading
 from collections import defaultdict
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import urlsplit
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError, InvalidHashError
@@ -24,9 +27,10 @@ from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ConfigDict
 from starlette.background import BackgroundTask
-from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.concurrency import run_in_threadpool
 
 from .catalog import CATALOG, DEFAULT_SETTINGS, PERMISSIONS, ROLE_LABELS
+from . import storage
 
 ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = Path(os.environ.get('FLEET_DB', str(ROOT / 'data' / 'fleet.sqlite3')))
@@ -35,6 +39,7 @@ COOKIE = 'mahax_session'
 CLOSED = {'resolved','closed'}
 ACTIVE_MISSIONS = {'active','delayed'}
 LOCAL_TZ = timezone(timedelta(hours=3, minutes=30))
+INITIALIZE_LOCK = threading.Lock()
 
 def now():
     return datetime.now(timezone.utc).isoformat(timespec='seconds')
@@ -50,10 +55,9 @@ def fail(message, code=422):
 
 @contextmanager
 def database(write=False):
-    conn = sqlite3.connect(DB_PATH, timeout=15)
-    conn.row_factory = sqlite3.Row
-    conn.execute('PRAGMA foreign_keys=ON')
+    conn = storage.connect(DB_PATH)
     try:
+        conn.execute('PRAGMA foreign_keys=ON')
         if write:
             conn.execute('BEGIN IMMEDIATE')
         yield conn
@@ -80,10 +84,13 @@ def audit(conn,user,action,kind='',rid='',detail=''):
     conn.execute('INSERT INTO audit(at,username,action,kind,record_id,detail) VALUES(?,?,?,?,?,?)',(now(),user['username'],action,kind,rid,detail))
 
 def initialize():
-    DB_PATH.parent.mkdir(parents=True,exist_ok=True)
+    remote = bool(storage.remote_url())
+    if not remote and not storage.is_hosted():
+        DB_PATH.parent.mkdir(parents=True,exist_ok=True)
     with database() as conn:
-        conn.execute('PRAGMA journal_mode=WAL')
-        conn.executescript('''
+        if not remote:
+            conn.execute('PRAGMA journal_mode=WAL')
+        schema = '''
         CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,username TEXT UNIQUE NOT NULL,name TEXT NOT NULL,password_hash TEXT NOT NULL,role TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,csrf TEXT NOT NULL,expires REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS records(id TEXT PRIMARY KEY,kind TEXT NOT NULL,code TEXT NOT NULL,data TEXT NOT NULL CHECK(json_valid(data)),demo INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(kind,code));
@@ -91,30 +98,80 @@ def initialize():
         CREATE TABLE IF NOT EXISTS settings(id INTEGER PRIMARY KEY CHECK(id=1),data TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT,at TEXT NOT NULL,username TEXT NOT NULL,action TEXT NOT NULL,kind TEXT,record_id TEXT,detail TEXT);
         CREATE TABLE IF NOT EXISTS login_attempts(key TEXT PRIMARY KEY,failures INTEGER NOT NULL,blocked_until REAL NOT NULL);
-        ''')
+        '''
+        # Explicit transaction also prevents concurrent cold starts from
+        # generating competing administrator accounts in the hosted database.
+        conn.execute('BEGIN IMMEDIATE')
+        for statement in schema.split(';'):
+            if statement.strip():
+                conn.execute(statement)
         conn.execute('INSERT OR IGNORE INTO settings VALUES(1,?)',(json.dumps(DEFAULT_SETTINGS),))
         if not conn.execute('SELECT 1 FROM users LIMIT 1').fetchone():
+            if remote and not os.environ.get('FLEET_ADMIN_PASSWORD'):
+                raise storage.StorageConfigurationError('FLEET_ADMIN_PASSWORD is required for the first hosted administrator')
             password = os.environ.get('FLEET_ADMIN_PASSWORD') or secrets.token_urlsafe(14)
             if len(password)<10:
                 raise RuntimeError('FLEET_ADMIN_PASSWORD must contain at least 10 characters')
             conn.execute('INSERT INTO users VALUES(?,?,?,?,?,?,?)',(secrets.token_hex(8),'admin','مدیر سیستم',HASHER.hash(password),'admin',1,now()))
-            if not os.environ.get('FLEET_ADMIN_PASSWORD'):
+            if not remote and not os.environ.get('FLEET_ADMIN_PASSWORD'):
                 (DB_PATH.parent/'initial-credentials.txt').write_text(f'URL: http://127.0.0.1:8000\nUsername: admin\nPassword: {password}\nChange the password after first login.\n',encoding='utf-8')
 
 @asynccontextmanager
 async def lifespan(app):
-    initialize()
+    # Local execution remains eager. Serverless runtimes can omit ASGI
+    # lifespan; the middleware below initializes safely on the first request.
+    if not storage.is_hosted():
+        initialize()
+        app.state.database_ready = True
     yield
+    app.state.database_ready = False
 
-app=FastAPI(title='Mahax Fleet Local API',version='1.0.0',lifespan=lifespan,docs_url=None,redoc_url=None)
-app.add_middleware(TrustedHostMiddleware,allowed_hosts=['localhost','127.0.0.1','testserver'])
+def allowed_hosts():
+    hosts = {'localhost', '127.0.0.1', 'testserver'}
+    for variable in ('VERCEL_URL', 'VERCEL_PROJECT_PRODUCTION_URL', 'VERCEL_BRANCH_URL', 'FLEET_ALLOWED_HOSTS'):
+        for value in os.environ.get(variable, '').split(','):
+            value = value.strip()
+            if value:
+                host = urlsplit(value if '://' in value else 'https://' + value).hostname
+                if host:
+                    hosts.add(host)
+    return sorted(hosts)
+
+
+def ensure_ready():
+    with INITIALIZE_LOCK:
+        if not app.state.database_ready:
+            initialize()
+            app.state.database_ready = True
+
+
+app=FastAPI(title='Mahax Fleet API',version='1.1.0',lifespan=lifespan,docs_url=None,redoc_url=None)
+app.state.database_ready = False
 
 @app.middleware('http')
 async def headers_and_origin(request,call_next):
+    if request.url.hostname not in allowed_hosts():
+        return JSONResponse({'detail':'دامنهٔ درخواست مجاز نیست.'},400)
     if request.method in {'POST','PUT','PATCH','DELETE'}:
         origin=request.headers.get('origin')
-        if origin and origin not in {str(request.base_url).rstrip('/'),'http://127.0.0.1:5173','http://localhost:5173'}:
+        # The Vercel proxy can speak HTTP internally; the browser uses HTTPS.
+        origins = {str(request.base_url).rstrip('/')}
+        if storage.is_hosted():
+            origins = {'https://' + request.headers['host']}
+        else:
+            origins.update({'http://127.0.0.1:5173', 'http://localhost:5173'})
+        if origin and origin not in origins:
             return JSONResponse({'detail':'مبدأ درخواست مجاز نیست.'},403)
+    if request.url.path.startswith('/api') and not app.state.database_ready:
+        try:
+            await run_in_threadpool(ensure_ready)
+        except storage.StorageConfigurationError as error:
+            logging.getLogger(__name__).error('Database configuration: %s', error)
+            return JSONResponse({'detail':'تنظیمات پایگاه‌دادهٔ آنلاین کامل نیست. مدیر سایت باید اتصال پایگاه‌داده و رمز اولیهٔ مدیر را در Vercel تنظیم و دوباره منتشر کند.'},503,headers={'Cache-Control':'no-store'})
+        except Exception as error:
+            # Do not expose connection URLs, tokens, or driver exception text.
+            logging.getLogger(__name__).error('Database initialization failed (%s)', type(error).__name__)
+            return JSONResponse({'detail':'اتصال به پایگاه‌داده برقرار نشد. مدیر سایت باید اتصال و دسترسی پایگاه‌داده را بررسی کند.'},503,headers={'Cache-Control':'no-store'})
     response=await call_next(request)
     response.headers['X-Content-Type-Options']='nosniff'
     response.headers['X-Frame-Options']='DENY'
@@ -154,7 +211,12 @@ class Login(BaseModel):
 
 @app.get('/api/health')
 def health():
-    return {'status':'ok'}
+    try:
+        with database() as conn:
+            conn.execute('SELECT 1 FROM settings WHERE id=1').fetchone()
+        return {'status':'ok','database':'connected','storage':'turso' if storage.remote_url() else 'sqlite'}
+    except Exception:
+        return JSONResponse({'status':'error','database':'unavailable'},503,headers={'Cache-Control':'no-store'})
 
 @app.post('/api/auth/login')
 def login(payload:Login,request:Request,response:Response):
@@ -180,7 +242,7 @@ def login(payload:Login,request:Request,response:Response):
         csrf=secrets.token_urlsafe(24)
         conn.execute('INSERT INTO sessions VALUES(?,?,?,?)',(hashlib.sha256(token.encode()).hexdigest(),user['id'],csrf,time.time()+43200))
         audit(conn,user,'login')
-    response.set_cookie(COOKIE,token,httponly=True,samesite='strict',secure=os.environ.get('FLEET_HTTPS')=='1',max_age=43200,path='/')
+    response.set_cookie(COOKIE,token,httponly=True,samesite='strict',secure=storage.is_hosted() or os.environ.get('FLEET_HTTPS')=='1',max_age=43200,path='/')
     return {'user':public_user(user),'csrf':csrf}
 
 @app.get('/api/auth/me')
@@ -566,10 +628,14 @@ def import_csv(kind:str,payload:ImportData,user=Depends(admin)):
 @app.get('/api/backup')
 def backup(user=Depends(admin)):
     fd,path=tempfile.mkstemp(suffix='.sqlite3');os.close(fd)
-    with database() as conn:
-        dest=sqlite3.connect(path)
-        try:conn.backup(dest)
-        finally:dest.close()
+    try:
+        with database() as conn:
+            dest=sqlite3.connect(path)
+            try:conn.backup(dest)
+            finally:dest.close()
+    except Exception:
+        os.unlink(path)
+        raise
     return FileResponse(path,filename='mahax-fleet-backup.sqlite3',media_type='application/octet-stream',background=BackgroundTask(os.unlink,path))
 
 @app.post('/api/demo/load')
@@ -597,5 +663,5 @@ def clear_demo(user=Depends(admin)):
     return {'ok':True}
 
 DIST=ROOT/'dist'
-if DIST.exists():
+if DIST.exists() and not storage.is_hosted():
     app.mount('/',StaticFiles(directory=DIST,html=True),name='web')
