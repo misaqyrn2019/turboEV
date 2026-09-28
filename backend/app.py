@@ -106,6 +106,11 @@ def initialize():
             if statement.strip():
                 conn.execute(statement)
         conn.execute('INSERT OR IGNORE INTO settings VALUES(1,?)',(json.dumps(DEFAULT_SETTINGS),))
+        # Rebrand only the shipped organization name; preserve customized settings.
+        stored_settings = json.loads(conn.execute('SELECT data FROM settings WHERE id=1').fetchone()[0])
+        if stored_settings.get('organization') == 'ماهکس × توسن':
+            stored_settings['organization'] = DEFAULT_SETTINGS['organization']
+            conn.execute('UPDATE settings SET data=? WHERE id=1',(json.dumps(stored_settings),))
         if not conn.execute('SELECT 1 FROM users LIMIT 1').fetchone():
             if remote and not os.environ.get('FLEET_ADMIN_PASSWORD'):
                 raise storage.StorageConfigurationError('FLEET_ADMIN_PASSWORD is required for the first hosted administrator')
@@ -145,7 +150,7 @@ def ensure_ready():
             app.state.database_ready = True
 
 
-app=FastAPI(title='Mahax Fleet API',version='1.1.0',lifespan=lifespan,docs_url=None,redoc_url=None)
+app=FastAPI(title='MAPNA Fleet API',version='1.1.0',lifespan=lifespan,docs_url=None,redoc_url=None)
 app.state.database_ready = False
 
 @app.middleware('http')

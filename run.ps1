@@ -25,7 +25,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $projectRoot 'dist/index.html'))) {
 }
 & $fleetPython -c 'from backend.app import initialize; initialize()'
 if ($LASTEXITCODE -ne 0) { throw 'Database initialization failed.' }
-Write-Host 'Mahax Fleet is ready. Open http://127.0.0.1:8000 in your browser.' -ForegroundColor Green
+Write-Host 'Fleet is ready. Open http://127.0.0.1:8000 in your browser.' -ForegroundColor Green
 Write-Host 'Initial admin credentials: fleet_web/data/initial-credentials.txt'
 Write-Host 'Keep this window open. Press Ctrl+C to stop the local service.'
 & $fleetPython -m uvicorn backend.app:app --host 127.0.0.1 --port 8000

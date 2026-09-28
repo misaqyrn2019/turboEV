@@ -14,7 +14,7 @@ test('RTL desktop and mobile: authentication, demo, purchases, editing, filterin
   await page.getByRole('button',{name:'ورود به سامانه',exact:true}).click()
   await expect(page.getByRole('heading',{name:'همهٔ ناوگان، در یک نگاه.'})).toBeVisible()
   await page.getByRole('button',{name:'مشاهده داده نمایشی',exact:true}).click()
-  await expect(page.getByText('حالت نمایشی · این اطلاعات ساختگی است و آمار واقعی ماهکس نیست.')).toBeVisible()
+  await expect(page.getByText('حالت نمایشی · این اطلاعات ساختگی است و آمار واقعی مپنا نیست.')).toBeVisible()
   await expect(page.locator('.stat-value').first()).toContainText('۱۲')
   await expect(page.locator('.recharts-surface').first()).toBeVisible()
   await expect(page.locator('.recharts-pie-sector')).toHaveCount(4)

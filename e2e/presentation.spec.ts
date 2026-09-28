@@ -27,7 +27,7 @@ test('interactive presentation: chapters, original slides, motion controls and r
   await nav.getByRole('button', { name: /منطق اقتصادی/ }).click()
   await page.getByRole('button', { name: /توقف عملیات/ }).click()
   await expect(page.getByText(/زمان خارج از سرویس و مأموریت‌های ازدست‌رفته/)).toBeVisible()
-  await nav.getByRole('button', { name: /پایلوت ماهکس/ }).click()
+  await nav.getByRole('button', { name: /پایلوت ناوگان/ }).click()
   await page.getByRole('button', { name: 'تعویض باتری', exact: true }).click()
   await expect(page.getByAltText('تصویر مفهومی ایستگاه تعویض باتری')).toBeVisible()
   await page.screenshot({ path: 'qa/presentation-pilot-desktop.png', fullPage: true, animations: 'disabled' })
@@ -56,12 +56,12 @@ test('interactive presentation: chapters, original slides, motion controls and r
   await page.getByRole('button', { name: 'خروج از تمام‌صفحه' }).click()
   await page.setViewportSize({ width: 390, height: 844 })
   await page.screenshot({ path: 'qa/presentation-cover-mobile.png', fullPage: true, animations: 'disabled' })
-  const names = ['افق برقی','مسئلهٔ عملیات','خدمت یکپارچه','یک روز کاری','منطق اقتصادی','پایلوت ماهکس','مسیر آینده']
+  const names = ['افق برقی','مسئلهٔ عملیات','خدمت یکپارچه','یک روز کاری','منطق اقتصادی','پایلوت ناوگان','مسیر آینده']
   for (const name of names) {
     await nav.getByRole('button', { name: new RegExp(name) }).click()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   }
-  await nav.getByRole('button', { name: /پایلوت ماهکس/ }).click()
+  await nav.getByRole('button', { name: /پایلوت ناوگان/ }).click()
   await page.screenshot({ path: 'qa/presentation-pilot-mobile.png', fullPage: true, animations: 'disabled' })
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await expect(page.locator('.strategy-experience')).toHaveClass(/motion-off/)

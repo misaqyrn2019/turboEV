@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
@@ -31,6 +32,25 @@ def seed(c):
     return c.get('/api/bootstrap').json()
 
 def fields(data,kind,row):return {f['key']:row.get(f['key']) for f in data['catalog'][kind]['fields']}
+
+def test_mapna_rebrand_preserves_credentials_records_and_custom_settings(client):
+    post(client,'centers',{'code':'BRAND-C1','name':'Existing center','city':'Tehran','status':'active'})
+    before = client.get('/api/bootstrap').json()
+    with server.database(write=True) as conn:
+        user_before = tuple(conn.execute('SELECT id,password_hash FROM users WHERE username=?',('admin',)).fetchone())
+        legacy = {**before['settings'],'organization':'ماهکس × توسن','sla_high_minutes':37}
+        conn.execute('UPDATE settings SET data=? WHERE id=1',(json.dumps(legacy),))
+    server.initialize()
+    server.initialize()
+    migrated = client.get('/api/bootstrap').json()
+    assert migrated['settings'] == {**legacy,'organization':'مپنا'}
+    assert migrated['records'] == before['records']
+    with server.database(write=True) as conn:
+        assert tuple(conn.execute('SELECT id,password_hash FROM users WHERE username=?',('admin',)).fetchone()) == user_before
+        customized = {**migrated['settings'],'organization':'My custom workspace'}
+        conn.execute('UPDATE settings SET data=? WHERE id=1',(json.dumps(customized),))
+    server.initialize()
+    assert client.get('/api/bootstrap').json()['settings'] == customized
 
 def post(c,kind,body,expected=200):
     r=c.post('/api/records/'+kind,json=body)

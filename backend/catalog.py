@@ -27,7 +27,7 @@ CATALOG = {
     CODE, NAME, f('city','شهر',required=True), f('address','نشانی','textarea'), f('manager','مسئول مرکز'), f('phone','تلفن'), num('latitude','عرض جغرافیایی',None,-90,90),num('longitude','طول جغرافیایی',None,-180,180),num('power_kw','ظرفیت برق (کیلووات)'),f('safety_approved','تأیید ایمنی سایت','checkbox',default=False), STATUS, NOTES
  ], ['code','name','city','manager','status'],'مراکز عملیاتی، مسئولان و آمادگی زیرساخت'),
  'fleets': module('ناوگان','ناوگان','Truck',[
-    CODE,NAME,ref('center_id','مرکز توزیع','centers',True),f('owner','مالک / بهره‌بردار'),f('service_owner','مسئول فنی توسن'),f('mission_scope','محدوده مأموریت'),STATUS,NOTES
+    CODE,NAME,ref('center_id','مرکز توزیع','centers',True),f('owner','مالک / بهره‌بردار'),f('service_owner','مسئول فنی'),f('mission_scope','محدوده مأموریت'),STATUS,NOTES
  ],['code','name','center_id','owner','status'],'مدیریت گروه‌های ناوگان و مراکز عملیاتی'),
  'drivers': module('رانندگان','راننده','Users',[
     CODE, NAME,f('phone','تلفن همراه'),f('license','شماره گواهینامه'),ref('center_id','مرکز توزیع','centers',True),f('trained','آموزش و تحویل تأیید شده','checkbox',default=False),STATUS,NOTES
@@ -67,6 +67,6 @@ CATALOG = {
  ],['code','name','owner','status','reviewed_at'],'ثبت پنج پیش‌شرط و تصمیم ادامه، اصلاح یا توقف پایلوت'),
 }
 
-DEFAULT_SETTINGS = dict(organization='ماهکس × توسن', low_soc=20, min_dispatch_soc=30, high_temperature=45, stale_hours=24, sla_critical_minutes=30, sla_high_minutes=120, sla_low_minutes=1440, sla_restore_hours=4, target_uptime=90, target_success=95, data_mode='empty')
+DEFAULT_SETTINGS = dict(organization='مپنا', low_soc=20, min_dispatch_soc=30, high_temperature=45, stale_hours=24, sla_critical_minutes=30, sla_high_minutes=120, sla_low_minutes=1440, sla_restore_hours=4, target_uptime=90, target_success=95, data_mode='empty')
 ROLE_LABELS = {'admin':'مدیر سیستم','operator':'مدیر عملیات','technician':'پشتیبانی و تعمیرکار','charging':'اپراتور شارژ','viewer':'مشاهده‌گر'}
 PERMISSIONS = {'admin': list(CATALOG), 'operator': ['missions','incidents','tickets','checks','daily_logs'], 'technician':['incidents','tickets','batteries'], 'charging':['charges','batteries'], 'viewer':[]}
