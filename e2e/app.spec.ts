@@ -66,6 +66,7 @@ test('RTL desktop and mobile: authentication, demo, purchases, editing, filterin
     await expect(page.locator('main h1')).toBeVisible()
     expect(await page.locator('main').innerText()).not.toContain('undefined')
   }
+  await page.getByRole('button',{name:'اسلایدهای اصلی',exact:true}).click()
   await page.getByRole('button',{name:'اسلاید بعد',exact:true}).click()
   await expect(page.locator('.presentation-toolbar')).toContainText('قدرت مهندسی مپنا')
   await page.getByRole('navigation').getByRole('button',{name:'تنظیمات',exact:true}).click()

@@ -4,6 +4,9 @@ qa/
 node_modules/
 dist/
 .git/
+.vercel/
+.agents/
+skills-lock.json
 .env
 .env.*
 __pycache__/
